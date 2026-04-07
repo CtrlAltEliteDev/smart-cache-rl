@@ -37,6 +37,8 @@ class DQNCacheAgent:
         self.lr = 0.02
         self.epsilon = 0.15
         self.max_replay = 5000
+        self.epsilon_min = 0.02
+        self.epsilon_decay = 0.999
 
     def vectorize(self, obs: SmartCacheRlObservation) -> np.ndarray:
         return np.asarray(
@@ -82,6 +84,27 @@ class DQNCacheAgent:
         if len(self.replay) > self.max_replay:
             self.replay.pop(0)
 
+    def observe_vector(
+        self,
+        state: np.ndarray,
+        action: Optional[int],
+        reward: float,
+        next_state: np.ndarray,
+        done: bool,
+    ) -> None:
+        if action is None:
+            return
+        t = Transition(
+            state=np.asarray(state, dtype=np.float32),
+            action=int(action),
+            reward=float(reward),
+            next_state=np.asarray(next_state, dtype=np.float32),
+            done=bool(done),
+        )
+        self.replay.append(t)
+        if len(self.replay) > self.max_replay:
+            self.replay.pop(0)
+
     def train_step(self, batch_size: int = 32) -> float:
         if not self.replay:
             return 0.0
@@ -95,4 +118,5 @@ class DQNCacheAgent:
             td_error = target - q_pred
             self.weights[tr.action] += self.lr * td_error * tr.state
             loss_sum += td_error * td_error
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
         return loss_sum / float(len(idxs))

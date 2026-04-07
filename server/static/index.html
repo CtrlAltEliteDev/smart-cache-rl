@@ -581,6 +581,10 @@
         const actionSource = obs.ui_action_source ?? md.action_source ?? "-";
         const appliedEvict = obs.ui_applied_evict_slot ?? md.applied_evict_slot ?? "-";
         const penalty = typeof rewardVal === "number" && rewardVal < 0 && actionSource === "agent:fallback" ? "yes" : "no";
+        const dqnLossVal = md.dqn_training_loss;
+        const dqnLoss = typeof dqnLossVal === "number" ? dqnLossVal.toFixed(4) : "-";
+        const dqnEpsVal = md.dqn_epsilon;
+        const dqnEpsilon = typeof dqnEpsVal === "number" ? dqnEpsVal.toFixed(4) : "-";
         const counters = [
           ["Hits", hits],
           ["Misses", misses],
@@ -588,10 +592,14 @@
           ["Penalty", penalty],
           ["Action Source", actionSource],
           ["Evict Slot", appliedEvict],
+          ["DQN Loss", dqnLoss],
+          ["DQN Epsilon", dqnEpsilon],
         ];
-        liveCounters.innerHTML = counters
-          .map(([k, v]) => `<div class="chip"><span class="k">${k}</span><span class="v">${v}</span></div>`)
-          .join("");
+        if (liveCounters) {
+          liveCounters.innerHTML = counters
+            .map(([k, v]) => `<div class="chip"><span class="k">${k}</span><span class="v">${v}</span></div>`)
+            .join("");
+        }
       }
 
       function show(payload) {

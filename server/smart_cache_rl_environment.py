@@ -24,9 +24,11 @@ from openenv.core.env_server.types import State
 try:
     from ..models import SmartCacheRlAction, SmartCacheRlObservation
     from ..agent import DQNCacheAgent
+    from ..grader import Grader
 except ImportError:
     from models import SmartCacheRlAction, SmartCacheRlObservation
     from agent import DQNCacheAgent
+    from grader import Grader
 
 try:
     import redis  # type: ignore
@@ -66,6 +68,9 @@ class SmartCacheRlEnvironment(Environment):
         self._item_costs = self._rng.integers(1, 32, size=self.catalog_size).astype(float)
         raw_pop = self._rng.zipf(1.25, size=self.catalog_size).astype(float)
         self._popularity = raw_pop / raw_pop.sum()
+        self._sampling_mode = os.getenv("REQUEST_SAMPLING_MODE", "popularity").strip().lower()
+        if self._sampling_mode not in ("popularity", "uniform"):
+            self._sampling_mode = "popularity"
 
         use_wikipedia = os.getenv("USE_WIKIPEDIA_DATA", "true").lower() in ("1", "true", "yes")
         if use_wikipedia:
@@ -88,6 +93,12 @@ class SmartCacheRlEnvironment(Environment):
         if self._agent_mode not in ("manual", "lru", "lfu", "dqn"):
             self._agent_mode = "manual"
         self._dqn_agent = DQNCacheAgent(capacity=self.capacity, feature_dim=68, seed=42)
+        self._grader = Grader()
+        self._train_online = os.getenv("TRAIN_DQN_ONLINE", "true").lower() in ("1", "true", "yes")
+        self._train_every = max(1, int(os.getenv("DQN_TRAIN_EVERY", "1")))
+        self._train_batch_size = max(1, int(os.getenv("DQN_BATCH_SIZE", "32")))
+        self._train_steps = 0
+        self._last_train_loss = 0.0
         self._last_applied_evict_slot = -1
         self._last_action_source = "manual"
         self._last_agent_suggested_slot = -1
@@ -103,19 +114,24 @@ class SmartCacheRlEnvironment(Environment):
 
         self._current_seed = self.default_seed
         self._rng = np.random.default_rng(self._current_seed)
-        self._next_request = int(self._rng.choice(self.catalog_size, p=self._popularity))
+        self._next_request = self._sample_request()
         self._last_applied_evict_slot = -1
         self._last_action_source = "manual"
         self._last_agent_suggested_slot = -1
+        self._train_steps = 0
+        self._last_train_loss = 0.0
+        self._grader.reset()
         self._redis_episode_key = f"smart_cache_rl:episode:{self._state.episode_id}"
         self._write_redis_metrics(event="reset")
         return self._build_observation(done=False, reward=0.0)
 
     def step(self, action: SmartCacheRlAction) -> SmartCacheRlObservation:  # type: ignore[override]
         if self._next_request is None:
-            self._next_request = int(self._rng.choice(self.catalog_size, p=self._popularity))
+            self._next_request = self._sample_request()
 
         self._state.step_count += 1
+        state_vec = self._build_dqn_feature_vector()
+        train_action: Optional[int] = None
         request_id = int(self._next_request)
         self._last_hit = request_id in self._slot_by_item
         invalid_action_penalty = 0.0
@@ -151,14 +167,43 @@ class SmartCacheRlEnvironment(Environment):
                         invalid_action_penalty = -0.25
                     self._last_action_source = "manual"
                 self._last_applied_evict_slot = evict_index
+                train_action = int(evict_index)
                 self._evict_and_insert(evict_index, request_id)
 
         reward += invalid_action_penalty
         self._last_reward = reward
         done = self._state.step_count >= self.max_steps
-        self._next_request = int(self._rng.choice(self.catalog_size, p=self._popularity)) if not done else None
+        next_request = self._sample_request() if not done else None
+        if self._train_online and train_action is not None:
+            prev_request = self._next_request
+            self._next_request = next_request
+            next_state_vec = self._build_dqn_feature_vector()
+            self._next_request = prev_request
+            self._dqn_agent.observe_vector(
+                state=state_vec,
+                action=train_action,
+                reward=reward,
+                next_state=next_state_vec,
+                done=done,
+            )
+            if self._state.step_count % self._train_every == 0 and len(self._dqn_agent.replay) > 0:
+                self._last_train_loss = float(self._dqn_agent.train_step(batch_size=self._train_batch_size))
+                self._train_steps += 1
+        self._grader.update(
+            is_hit=self._last_hit,
+            reward=reward,
+            training_loss=self._last_train_loss,
+            epsilon=self._dqn_agent.epsilon,
+            train_steps=self._train_steps,
+            replay_size=len(self._dqn_agent.replay),
+        )
+        # Build observation first so `incoming_*`, `is_hit`, and `reward`
+        # describe the same processed request event in this step.
         self._write_redis_metrics(event="step")
-        return self._build_observation(done=done, reward=reward)
+        obs = self._build_observation(done=done, reward=reward)
+        # Prepare the next request after emitting the current observation.
+        self._next_request = next_request
+        return obs
 
     @property
     def state(self) -> State:
@@ -378,7 +423,14 @@ class SmartCacheRlEnvironment(Environment):
                 "applied_evict_slot": self._last_applied_evict_slot,
                 "redis_latest": redis_latest,
                 "catalog_source": self._catalog_source,
+                "sampling_mode": self._sampling_mode,
                 "incoming_name": incoming_name,
+                "dqn_online_training": self._train_online,
+                "dqn_training_loss": self._last_train_loss,
+                "dqn_epsilon": self._dqn_agent.epsilon,
+                "dqn_train_steps": self._train_steps,
+                "dqn_replay_size": len(self._dqn_agent.replay),
+                "grader": self._grader.to_dict(),
             },
         )
 
@@ -485,3 +537,8 @@ class SmartCacheRlEnvironment(Environment):
         except Exception:
             self._redis_status = "read_failed_fallback_memory"
             return {}
+
+    def _sample_request(self) -> int:
+        if self._sampling_mode == "uniform":
+            return int(self._rng.integers(0, self.catalog_size))
+        return int(self._rng.choice(self.catalog_size, p=self._popularity))

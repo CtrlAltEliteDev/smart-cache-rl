@@ -9,12 +9,17 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
+from fastapi import Body, FastAPI, HTTPException, status
 from fastapi.responses import HTMLResponse
+from pydantic import ValidationError
 
 try:
     from openenv.core.env_server.http_server import create_app
+    from openenv.core.env_server.serialization import deserialize_action, serialize_observation
+    from openenv.core.env_server.types import ResetRequest, ResetResponse, StepRequest, StepResponse, State
 except Exception as e:  # pragma: no cover
     raise ImportError(
         "openenv is required for the web interface. Install dependencies with '\n    uv sync\n'"
@@ -37,6 +42,71 @@ app = create_app(
     env_name="smart_cache_rl",
     max_concurrent_envs=1,
 )
+
+# OpenEnv's default HTTP /reset, /step, and /state handlers create a *new* environment on every
+# request and close it afterward, so the cache never accumulates across steps (only slot 0 fills).
+# Replace them with a single long-lived instance for REST clients and the static dashboard.
+_http_env_lock = threading.Lock()
+_http_env: SmartCacheRlEnvironment | None = None
+
+
+def _http_env_instance() -> SmartCacheRlEnvironment:
+    global _http_env
+    if _http_env is None:
+        _http_env = SmartCacheRlEnvironment()
+    return _http_env
+
+
+def _serialize_step_response(observation: SmartCacheRlObservation) -> dict:
+    """OpenEnv's serialize_observation drops `metadata`; the dashboard expects it under observation."""
+    payload = serialize_observation(observation)
+    meta = getattr(observation, "metadata", None) or {}
+    if meta:
+        payload["observation"] = {**payload["observation"], "metadata": meta}
+    return payload
+
+
+def _remove_stateless_simulation_routes(application: FastAPI) -> None:
+    kept: list = []
+    for route in list(application.router.routes):
+        path = getattr(route, "path", "")
+        methods = getattr(route, "methods", None) or set()
+        if path == "/reset" and "POST" in methods:
+            continue
+        if path == "/step" and "POST" in methods:
+            continue
+        if path == "/state" and "GET" in methods:
+            continue
+        kept.append(route)
+    application.router.routes = kept
+
+
+_remove_stateless_simulation_routes(app)
+
+
+@app.post("/reset", response_model=ResetResponse, tags=["Environment Control"])
+def persistent_reset(_request: ResetRequest = Body(default_factory=ResetRequest)) -> ResetResponse:
+    # SmartCacheRlEnvironment.reset() ignores seed for now; _request kept for API compatibility.
+    with _http_env_lock:
+        observation = _http_env_instance().reset()
+    return ResetResponse(**_serialize_step_response(observation))
+
+
+@app.post("/step", response_model=StepResponse, tags=["Environment Control"])
+def persistent_step(request: StepRequest) -> StepResponse:
+    try:
+        action = deserialize_action(request.action, SmartCacheRlAction)
+    except ValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.errors()) from e
+    with _http_env_lock:
+        observation = _http_env_instance().step(action)
+    return StepResponse(**_serialize_step_response(observation))
+
+
+@app.get("/state", response_model=State, tags=["State Management"])
+def persistent_state() -> State:
+    with _http_env_lock:
+        return _http_env_instance().state
 
 _UI_HTML_PATH = Path(__file__).parent / "static" / "index.html"
 
