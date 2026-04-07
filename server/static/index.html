@@ -208,15 +208,11 @@
         flex-direction: column;
         gap: 12px;
         min-height: 0;
-        overflow: hidden;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 4px;
       }
 
-      .stats {
-        flex-shrink: 0;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
-      }
 
       .chip {
         background: var(--surface);
@@ -231,6 +227,12 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
         margin-bottom: 10px;
+      }
+      .live-counter-body {
+        max-height: 180px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 4px;
       }
 
       .chip:hover {
@@ -385,6 +387,9 @@
         display: flex;
         flex-direction: column;
         gap: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 4px;
       }
 
       .status {
@@ -404,6 +409,48 @@
       .response-card {
         min-height: 0;
       }
+      .compare-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .compare-body {
+        max-height: 230px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 4px;
+      }
+      .compare-controls input {
+        width: 86px;
+        border: 1px solid var(--border);
+        background: var(--surface-muted);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 6px 8px;
+        font-size: 0.8rem;
+      }
+      .compare-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.76rem;
+      }
+      .compare-table th,
+      .compare-table td {
+        border: 1px solid var(--border);
+        padding: 6px 8px;
+        text-align: left;
+      }
+      .compare-table th {
+        background: var(--surface-muted);
+        color: var(--muted);
+        font-weight: 700;
+      }
+      .compare-note {
+        margin-top: 8px;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
 
       @media (max-width: 900px) {
         :root {
@@ -417,10 +464,6 @@
 
         .sidebar {
           max-height: none;
-        }
-
-        .stats {
-          grid-template-columns: repeat(4, minmax(0, 1fr));
         }
 
         body {
@@ -438,9 +481,6 @@
       }
 
       @media (max-width: 520px) {
-        .stats {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
       }
 
       .loading-overlay {
@@ -570,10 +610,11 @@
 
       <div class="workspace">
         <aside class="sidebar" aria-label="Controls and live metrics">
-          <div class="stats" id="stats"></div>
           <section class="card">
             <h2>Live Counters</h2>
-            <div class="counter-grid" id="liveCounters"></div>
+            <div class="live-counter-body">
+              <div class="counter-grid" id="liveCounters"></div>
+            </div>
           </section>
 
           <section class="card controls-card">
@@ -594,6 +635,31 @@
               <div class="status" id="statusLine">Ready.</div>
             </div>
           </section>
+
+          <section class="card">
+            <h2>Policy Comparison</h2>
+            <div class="compare-body">
+              <div class="compare-controls">
+                <label for="compareSteps">Steps</label>
+                <input id="compareSteps" type="number" min="20" max="2000" step="10" value="300" />
+                <button id="compareBtn" class="primary">Run Comparison</button>
+              </div>
+              <table class="compare-table" id="compareTable">
+                <thead>
+                  <tr>
+                    <th>Policy</th>
+                    <th>Hit Rate</th>
+                    <th>Hits</th>
+                    <th>Misses</th>
+                    <th>Cum Reward</th>
+                    <th>Grade</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+              <div class="compare-note" id="compareNote">Run to compare `lru`, `lfu`, and `dqn` on the same step budget.</div>
+            </div>
+          </section>
         </aside>
 
         <section class="card response-card">
@@ -606,10 +672,11 @@
     <script>
       const statusEl = document.getElementById("statusLine");
       const out = document.getElementById("responseBox");
-      const stats = document.getElementById("stats");
       const liveCounters = document.getElementById("liveCounters");
       const loadingOverlay = document.getElementById("loadingOverlay");
       const appRoot = document.getElementById("appRoot");
+      const compareTableBody = document.querySelector("#compareTable tbody");
+      const compareNote = document.getElementById("compareNote");
 
       let loadingCount = 0;
 
@@ -642,16 +709,6 @@
         const step = md.step ?? obs.step_count ?? payload?.state?.step_count ?? "-";
         const mode = obs.ui_agent_mode ?? md.agent_mode ?? "manual";
         const redis = md.redis_status ?? "-";
-        const items = [
-          ["Step", step],
-          ["Hit Rate", typeof hitRate === "number" ? hitRate.toFixed(3) : hitRate],
-          ["Agent Mode", mode],
-          ["Redis", redis],
-        ];
-        stats.innerHTML = items
-          .map(([k, v]) => `<div class="chip"><span class="k">${k}</span><span class="v">${v}</span></div>`)
-          .join("");
-
         const rewardVal = payload?.reward ?? obs?.reward ?? 0;
         const reward = typeof rewardVal === "number" ? rewardVal.toFixed(2) : rewardVal;
         const hits = md.hits ?? "-";
@@ -716,6 +773,65 @@
         }
       }
 
+      async function apiJson(path, method = "GET", body = null) {
+        const res = await fetch(path, {
+          method,
+          headers: body ? { "Content-Type": "application/json" } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { raw: text };
+        }
+        if (!res.ok) {
+          throw new Error(`${method} ${path} failed (${res.status})`);
+        }
+        return data;
+      }
+
+      function renderComparisonRows(rows) {
+        if (!compareTableBody) return;
+        compareTableBody.innerHTML = rows
+          .map((r) => {
+            const hr = typeof r.hitRate === "number" ? r.hitRate.toFixed(3) : "-";
+            const cr = typeof r.cumReward === "number" ? r.cumReward.toFixed(2) : "-";
+            const grade = typeof r.grade === "number" ? r.grade.toFixed(3) : "-";
+            return `<tr>
+              <td>${r.mode.toUpperCase()}</td>
+              <td>${hr}</td>
+              <td>${r.hits}</td>
+              <td>${r.misses}</td>
+              <td>${cr}</td>
+              <td>${grade}</td>
+            </tr>`;
+          })
+          .join("");
+      }
+
+      async function runPolicy(mode, steps) {
+        await apiJson("/reset", "POST", {});
+        let finalObs = null;
+        for (let i = 0; i < steps; i += 1) {
+          const body = { action: { use_agent: true, agent_mode: mode } };
+          const stepResp = await apiJson("/step", "POST", body);
+          finalObs = stepResp.observation;
+          if (stepResp.done) break;
+        }
+        const md = (finalObs && finalObs.metadata) ? finalObs.metadata : {};
+        const grader = md.grader || {};
+        return {
+          mode,
+          hitRate: Number(md.hit_rate ?? grader.hit_rate ?? 0),
+          hits: Number(md.hits ?? grader.hits ?? 0),
+          misses: Number(md.misses ?? grader.misses ?? 0),
+          cumReward: Number(grader.cumulative_reward ?? 0),
+          grade: Number(grader.grade ?? 0),
+        };
+      }
+
       document.getElementById("resetBtn").onclick = () => callApi("/reset", "POST", {});
       document.getElementById("stateBtn").onclick = () => callApi("/state", "GET");
       document.getElementById("schemaBtn").onclick = () => callApi("/schema", "GET");
@@ -727,6 +843,32 @@
           await callApi("/step", "POST", { action });
         } catch (e) {
           setStatus("Invalid JSON in Step Action input", false);
+        }
+      };
+      document.getElementById("compareBtn").onclick = async () => {
+        const input = document.getElementById("compareSteps");
+        const steps = Math.max(20, Math.min(2000, Number(input.value || 300)));
+        setLoading(true);
+        setStatus(`Running comparison for ${steps} steps per policy...`);
+        try {
+          const rows = [];
+          for (const mode of ["lru", "lfu", "dqn"]) {
+            if (compareNote) compareNote.textContent = `Running ${mode.toUpperCase()}...`;
+            const result = await runPolicy(mode, steps);
+            rows.push(result);
+            renderComparisonRows(rows);
+          }
+          rows.sort((a, b) => b.grade - a.grade);
+          const best = rows[0];
+          if (compareNote) {
+            compareNote.textContent = `Best by grade: ${best.mode.toUpperCase()} (grade ${best.grade.toFixed(3)}).`;
+          }
+          setStatus("Comparison complete");
+        } catch (e) {
+          setStatus(`Comparison failed: ${e.message || e}`, false);
+          if (compareNote) compareNote.textContent = "Comparison failed. Check server logs or retry.";
+        } finally {
+          setLoading(false);
         }
       };
 
