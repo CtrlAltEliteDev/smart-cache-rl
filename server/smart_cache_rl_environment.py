@@ -9,8 +9,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from typing import Dict, List, Optional
+import urllib.request
+from datetime import date, timedelta
 from uuid import uuid4
 
 import numpy as np
@@ -56,10 +59,17 @@ class SmartCacheRlEnvironment(Environment):
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._current_seed = self.default_seed
 
+        # Synthetic fallback catalog (overwritten by Wikipedia data if available)
+        self._item_names: List[str] = [str(i) for i in range(self.catalog_size)]
+        self._catalog_source = "synthetic"
         self._item_sizes = self._rng.integers(1, 16, size=self.catalog_size).astype(float)
         self._item_costs = self._rng.integers(1, 32, size=self.catalog_size).astype(float)
         raw_pop = self._rng.zipf(1.25, size=self.catalog_size).astype(float)
         self._popularity = raw_pop / raw_pop.sum()
+
+        use_wikipedia = os.getenv("USE_WIKIPEDIA_DATA", "true").lower() in ("1", "true", "yes")
+        if use_wikipedia:
+            self._fetch_wikipedia_catalog()
 
         self._cache: List[SmartCacheRlEnvironment._CacheItem] = []
         self._slot_by_item: Dict[int, int] = {}
@@ -305,17 +315,22 @@ class SmartCacheRlEnvironment(Environment):
             if slot < len(self._cache):
                 entry = self._cache[slot]
                 age = self._state.step_count - entry.last_access_step
+                name = self._item_names[entry.item_id] if entry.item_id < len(self._item_names) else str(entry.item_id)
                 snapshot.append(
-                    f"slot={slot} item={entry.item_id} freq={entry.frequency} age={age} "
+                    f"slot={slot} item='{name}' freq={entry.frequency} age={age} "
                     f"size={self._item_sizes[entry.item_id]:.0f} cost={self._item_costs[entry.item_id]:.0f}"
                 )
             else:
                 snapshot.append(f"slot={slot} empty")
 
         event = "HIT" if self._last_hit else "MISS"
+        incoming_name = (
+            self._item_names[incoming_id] if 0 <= incoming_id < len(self._item_names) else str(incoming_id)
+        )
         ui_summary = (
             f"step={self._state.step_count} {event} reward={reward:.2f} "
-            f"incoming={incoming_id} fill={sum(occupied)}/{self.capacity}"
+            f"incoming='{incoming_name}' fill={sum(occupied)}/{self.capacity} "
+            f"catalog={self._catalog_source}"
         )
         ui_hit_rate = f"hits={self._hit_count} misses={self._miss_count} hit_rate={hit_rate:.3f}"
         redis_latest = self._read_redis_latest()
@@ -362,8 +377,56 @@ class SmartCacheRlEnvironment(Environment):
                 "action_source": self._last_action_source,
                 "applied_evict_slot": self._last_applied_evict_slot,
                 "redis_latest": redis_latest,
+                "catalog_source": self._catalog_source,
+                "incoming_name": incoming_name,
             },
         )
+
+    def _fetch_wikipedia_catalog(self) -> bool:
+        """Fetch real Wikipedia pageview data to build item catalog. Returns True on success."""
+        # Try yesterday, then up to 7 days back (API may lag by 1-2 days)
+        for days_back in range(1, 8):
+            target = date.today() - timedelta(days=days_back)
+            url = (
+                f"https://wikimedia.org/api/rest_v1/metrics/pageviews/top/"
+                f"en.wikipedia/all-access/{target.year}/{target.month:02d}/{target.day:02d}"
+            )
+            try:
+                req = urllib.request.Request(
+                    url, headers={"User-Agent": "smart-cache-rl/1.0 (educational RL project)"}
+                )
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    data = json.loads(resp.read())
+                articles = data["items"][0]["articles"]
+                # Skip Main_Page and Special: pages
+                articles = [
+                    a for a in articles
+                    if a["article"] != "Main_Page" and not a["article"].startswith("Special:")
+                ]
+                articles = articles[:self.catalog_size]
+                if len(articles) < self.catalog_size:
+                    continue
+
+                names = [a["article"].replace("_", " ") for a in articles]
+                views = np.array([float(a["views"]) for a in articles])
+
+                self._item_names = names
+                self._popularity = views / views.sum()
+                # Size: deterministic from title hash so it's stable across episodes (1–15 range)
+                self._item_sizes = np.array(
+                    [float(abs(hash(n)) % 15 + 1) for n in names], dtype=float
+                )
+                # Cost: less popular articles are more expensive to re-fetch (rank-based)
+                self._item_costs = np.array(
+                    [float(self.catalog_size - i) / float(self.catalog_size) * 30.0 + 1.0
+                     for i in range(self.catalog_size)],
+                    dtype=float,
+                )
+                self._catalog_source = f"wikipedia:{target.isoformat()}"
+                return True
+            except Exception:
+                continue
+        return False
 
     def _init_redis(self) -> None:
         if not self._redis_enabled:
