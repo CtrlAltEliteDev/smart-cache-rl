@@ -442,10 +442,67 @@
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
       }
+
+      .loading-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 14px;
+        background: rgba(47, 41, 35, 0.28);
+        backdrop-filter: blur(3px);
+      }
+
+      .loading-overlay.is-visible {
+        display: flex;
+      }
+
+      .loading-spinner {
+        width: 42px;
+        height: 42px;
+        border: 3px solid rgba(13, 148, 136, 0.28);
+        border-top-color: var(--turquoise);
+        border-radius: 50%;
+        animation: loading-spin 0.65s linear infinite;
+      }
+
+      @keyframes loading-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .loading-label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #134e4a;
+        letter-spacing: 0.02em;
+      }
+
+      body.api-loading {
+        cursor: wait;
+      }
+
+      body.api-loading .controls-inner button {
+        pointer-events: none;
+        opacity: 0.72;
+      }
     </style>
   </head>
   <body>
-    <div class="app">
+    <div
+      id="loadingOverlay"
+      class="loading-overlay"
+      aria-hidden="true"
+      aria-live="polite"
+    >
+      <div class="loading-spinner" role="status"></div>
+      <span class="loading-label">Loading</span>
+    </div>
+    <div class="app" id="appRoot">
       <header class="top-bar">
         <h1>Smart Cache <span>RL</span> Dashboard</h1>
         <span class="badge">OpenEnv</span>
@@ -551,6 +608,27 @@
       const out = document.getElementById("responseBox");
       const stats = document.getElementById("stats");
       const liveCounters = document.getElementById("liveCounters");
+      const loadingOverlay = document.getElementById("loadingOverlay");
+      const appRoot = document.getElementById("appRoot");
+
+      let loadingCount = 0;
+
+      function setLoading(on) {
+        if (on) {
+          loadingCount += 1;
+        } else {
+          loadingCount = Math.max(0, loadingCount - 1);
+        }
+        const active = loadingCount > 0;
+        if (loadingOverlay) {
+          loadingOverlay.classList.toggle("is-visible", active);
+          loadingOverlay.setAttribute("aria-hidden", active ? "false" : "true");
+        }
+        document.body.classList.toggle("api-loading", active);
+        if (appRoot) {
+          appRoot.setAttribute("aria-busy", active ? "true" : "false");
+        }
+      }
 
       function setStatus(msg, ok = true) {
         statusEl.textContent = msg;
@@ -608,26 +686,34 @@
       }
 
       async function callApi(path, method = "GET", body = null) {
+        setLoading(true);
         setStatus(`${method} ${path} ...`);
-        const res = await fetch(path, {
-          method,
-          headers: body ? { "Content-Type": "application/json" } : undefined,
-          body: body ? JSON.stringify(body) : undefined,
-        });
-        const text = await res.text();
-        let data;
         try {
-          data = JSON.parse(text);
-        } catch {
-          data = { raw: text };
-        }
-        if (!res.ok) {
+          const res = await fetch(path, {
+            method,
+            headers: body ? { "Content-Type": "application/json" } : undefined,
+            body: body ? JSON.stringify(body) : undefined,
+          });
+          const text = await res.text();
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            data = { raw: text };
+          }
+          if (!res.ok) {
+            show(data);
+            setStatus(`${method} ${path} failed (${res.status})`, false);
+            return;
+          }
           show(data);
-          setStatus(`${method} ${path} failed (${res.status})`, false);
-          return;
+          setStatus(`${method} ${path} success`);
+        } catch (e) {
+          show({ error: String(e && e.message ? e.message : e) });
+          setStatus("Request failed (network or server)", false);
+        } finally {
+          setLoading(false);
         }
-        show(data);
-        setStatus(`${method} ${path} success`);
       }
 
       document.getElementById("resetBtn").onclick = () => callApi("/reset", "POST", {});
@@ -644,7 +730,7 @@
         }
       };
 
-      callApi("/metadata", "GET").catch(() => setStatus("Server not reachable", false));
+      callApi("/metadata", "GET");
 
       (function initTabs() {
         const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
