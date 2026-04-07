@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Cache RL Dashboard</title>
+    <style>
+      :root {
+        --bg: #f6efe6;
+        --bg-deep: #efe4d6;
+        --surface: #fffaf2;
+        --surface-muted: #f9f2e8;
+        --border: rgba(27, 154, 144, 0.24);
+        --border-strong: rgba(27, 154, 144, 0.4);
+        --text: #2f2923;
+        --muted: #6e6256;
+        --turquoise: #0d9488;
+        --turquoise-light: #2dd4bf;
+        --turquoise-soft: #d9f3ee;
+        --turquoise-glow: rgba(45, 212, 191, 0.2);
+        --ok: #0f766e;
+        --warn: #b45309;
+        --bad: #b91c1c;
+        --shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        --shadow-lg: 0 18px 40px -24px rgba(13, 148, 136, 0.45);
+        --radius: 16px;
+        --radius-sm: 12px;
+        --sidebar-w: min(320px, 36vw);
+        --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        font-family: var(--font);
+        color: var(--text);
+        background-color: var(--bg);
+        background-image:
+          radial-gradient(ellipse 120% 80% at 0% 0%, rgba(239, 228, 214, 0.95), transparent 55%),
+          radial-gradient(ellipse 90% 60% at 100% 10%, var(--turquoise-glow), transparent 50%),
+          linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+        overflow: hidden;
+      }
+
+      .app {
+        width: 100%;
+        height: 100%;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: clamp(12px, 2vw, 24px);
+        gap: 12px;
+        max-width: 100vw;
+      }
+
+      .top-bar {
+        flex-shrink: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px 16px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .top-bar h1 {
+        margin: 0;
+        font-size: clamp(1.2rem, 2.4vw, 1.65rem);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.2;
+        color: var(--text);
+      }
+
+      .top-bar h1 span {
+        color: var(--turquoise);
+      }
+
+      .badge {
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--turquoise);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 5px 11px;
+        box-shadow: var(--shadow);
+      }
+
+      .tab-shell {
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .tab-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-muted);
+      }
+
+      .tab-list button {
+        flex: 1 1 auto;
+        min-width: 0;
+        border: none;
+        border-radius: 0;
+        border-bottom: 3px solid transparent;
+        margin-bottom: -1px;
+        padding: 12px 14px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--muted);
+        background: transparent;
+        cursor: pointer;
+        font-family: inherit;
+        transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+      }
+
+      .tab-list button:hover {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.6);
+      }
+
+      .tab-list button[aria-selected="true"] {
+        color: var(--turquoise);
+        border-bottom-color: var(--turquoise);
+        background: var(--surface);
+      }
+
+      .tab-panel {
+        display: none;
+        padding: 14px 16px 16px;
+        max-height: min(220px, 28vh);
+        overflow-y: auto;
+        font-size: 0.875rem;
+        line-height: 1.55;
+        color: var(--text);
+      }
+
+      .tab-panel.active {
+        display: block;
+      }
+
+      .tab-panel h3 {
+        margin: 0 0 8px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--turquoise);
+      }
+
+      .tab-panel p {
+        margin: 0 0 10px;
+        color: var(--muted);
+      }
+
+      .tab-panel p:last-child {
+        margin-bottom: 0;
+      }
+
+      .tab-panel ul {
+        margin: 0 0 10px;
+        padding-left: 1.15rem;
+        color: var(--muted);
+      }
+
+      .tab-panel li {
+        margin-bottom: 6px;
+      }
+
+      .tab-panel strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .workspace {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+        gap: 14px;
+        align-items: stretch;
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .stats {
+        flex-shrink: 0;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .chip {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 8px 10px;
+        box-shadow: var(--shadow);
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .counter-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .chip:hover {
+        border-color: var(--border-strong);
+        box-shadow: var(--shadow), 0 0 0 1px rgba(13, 148, 136, 0.08);
+      }
+
+      .k {
+        display: block;
+        color: var(--muted);
+        font-size: 0.62rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+      }
+
+      .v {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -0.01em;
+        word-break: break-word;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        box-shadow: var(--shadow-lg);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .sidebar .card.controls-card {
+        flex: 1;
+        min-height: 0;
+      }
+
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--turquoise);
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      button {
+        border: 1px solid var(--border);
+        background: var(--surface-muted);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 8px 11px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.8rem;
+        font-family: inherit;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+      }
+
+      button:hover {
+        background: #fff;
+        border-color: var(--border-strong);
+      }
+
+      button:active {
+        transform: scale(0.98);
+      }
+
+      button.primary {
+        background: linear-gradient(180deg, var(--turquoise-light), var(--turquoise));
+        border-color: var(--turquoise);
+        color: #042f2e;
+        box-shadow: 0 2px 8px rgba(13, 148, 136, 0.25);
+      }
+
+      button.primary:hover {
+        filter: brightness(1.05);
+        border-color: #0f766e;
+      }
+
+      button.good {
+        background: var(--turquoise-soft);
+        border-color: rgba(13, 148, 136, 0.45);
+        color: #134e4a;
+      }
+
+      button.warn {
+        background: #f7ecd8;
+        border-color: rgba(180, 83, 9, 0.35);
+        color: #7c2d12;
+      }
+
+      label[for="actionInput"] {
+        display: block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+
+      textarea,
+      pre {
+        width: 100%;
+        background: var(--surface-muted);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-size: 0.78rem;
+      }
+
+      textarea {
+        flex: 1;
+        min-height: 100px;
+        padding: 10px 12px;
+        font-family: var(--mono);
+        line-height: 1.45;
+        resize: none;
+      }
+
+      textarea:focus {
+        outline: none;
+        border-color: var(--turquoise);
+        box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.25);
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px 14px;
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        font-family: var(--mono);
+        line-height: 1.5;
+      }
+
+      .controls-inner {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+
+      .status {
+        margin-top: 8px;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      .status.ok {
+        color: var(--ok);
+      }
+
+      .status.bad {
+        color: var(--bad);
+      }
+
+      .response-card {
+        min-height: 0;
+      }
+
+      @media (max-width: 900px) {
+        :root {
+          --sidebar-w: 1fr;
+        }
+
+        .workspace {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto minmax(280px, 1fr);
+        }
+
+        .sidebar {
+          max-height: none;
+        }
+
+        .stats {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        body {
+          overflow: auto;
+        }
+
+        .app {
+          height: auto;
+          min-height: 100vh;
+        }
+
+        .tab-panel {
+          max-height: none;
+        }
+      }
+
+      @media (max-width: 520px) {
+        .stats {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="top-bar">
+        <h1>Smart Cache <span>RL</span> Dashboard</h1>
+        <span class="badge">OpenEnv</span>
+      </header>
+
+      <div class="tab-shell" role="region" aria-label="About this dashboard">
+        <div class="tab-list" role="tablist" aria-label="Information tabs">
+          <button type="button" role="tab" id="tab-data" aria-selected="true" aria-controls="panel-data">Data sources</button>
+          <button type="button" role="tab" id="tab-how" aria-selected="false" aria-controls="panel-how">How it works</button>
+          <button type="button" role="tab" id="tab-why" aria-selected="false" aria-controls="panel-why">Why it matters</button>
+        </div>
+        <div
+          class="tab-panel active"
+          id="panel-data"
+          role="tabpanel"
+          aria-labelledby="tab-data"
+        >
+          <h3>Where the data comes from</h3>
+          <p>
+            Everything in the <strong>Response</strong> panel is JSON returned by this page’s own origin: the
+            <strong>Smart Cache RL</strong> FastAPI server (<code>/reset</code>, <code>/step</code>,
+            <code>/state</code>, <code>/schema</code>, <code>/metadata</code>). There is no separate database in the UI;
+            you are looking at live environment output.
+          </p>
+          <p>
+            <strong>Observations</strong> are built inside <code>SmartCacheRlEnvironment</code>: cache slots, the next
+            request, rewards, and <strong>metadata</strong> (hit rate, step count, catalog source, Redis status). The
+            <strong>request stream</strong> is sampled from an internal popularity model. If
+            <code>USE_WIKIPEDIA_DATA=true</code>, item popularity can come from
+            <strong>Wikimedia pageviews</strong> (REST API); otherwise the catalog falls back to
+            <strong>synthetic</strong> data. Optional <strong>Redis</strong> (<code>USE_REDIS</code>,
+            <code>REDIS_URL</code>) mirrors episode metrics for monitoring; the chips show connection status when present.
+          </p>
+        </div>
+        <div class="tab-panel" id="panel-how" role="tabpanel" aria-labelledby="tab-how" hidden>
+          <h3>How it works</h3>
+          <p>
+            The environment simulates a <strong>fixed-size cache</strong> under a stream of item requests. Each
+            <strong>Step</strong> applies your JSON action: manual eviction index, or let an <strong>agent</strong> pick
+            (<code>lru</code>, <code>lfu</code>, or <code>dqn</code>). Rewards reflect hits and misses (and penalties on
+            invalid moves). <strong>Reset</strong> starts a new episode; <strong>Get State / Schema / Metadata</strong>
+            introspect current state and types without advancing time.
+          </p>
+          <ul>
+            <li>Use the textarea to send a <code>SmartCacheRlAction</code> (for example <code>use_agent</code> and <code>agent_mode</code>).</li>
+            <li>The metric chips update from the latest payload’s <code>observation</code> and <code>metadata</code>.</li>
+          </ul>
+        </div>
+        <div class="tab-panel" id="panel-why" role="tabpanel" aria-labelledby="tab-why" hidden>
+          <h3>Why this app and the real world</h3>
+          <p>
+            Compared to fixed eviction rules, <strong>reinforcement learning</strong> lets you explore policies that
+            adapt to skewed traffic and cost signals, similar in spirit to <strong>CDN edge caches</strong>,
+            <strong>application caches</strong>, and <strong>key-value tiers</strong> where admission and eviction affect
+            latency and load. This UI is a <strong>controlled lab</strong>: same APIs you would use from scripts or MCP,
+            with clear JSON for debugging.
+          </p>
+          <p>
+            In production, operators still rely on heuristics and SLAs; here you can <strong>compare</strong> LRU/LFU/DQN
+            on the same workload, inspect <strong>hit rate</strong> and rewards per step, and optionally
+            <strong>export metrics to Redis</strong> like you might to a time-series or dashboard in the real world.
+          </p>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <aside class="sidebar" aria-label="Controls and live metrics">
+          <div class="stats" id="stats"></div>
+          <section class="card">
+            <h2>Live Counters</h2>
+            <div class="counter-grid" id="liveCounters"></div>
+          </section>
+
+          <section class="card controls-card">
+            <h2>Controls</h2>
+            <div class="controls-inner">
+              <div class="row">
+                <button class="good" id="resetBtn">Reset</button>
+                <button class="primary" id="stepBtn">Step</button>
+                <button class="warn" id="stateBtn">Get State</button>
+                <button id="schemaBtn">Get Schema</button>
+                <button id="metaBtn">Get Metadata</button>
+              </div>
+              <label for="actionInput">Step Action JSON</label>
+              <textarea id="actionInput">{
+  "use_agent": true,
+  "agent_mode": "dqn"
+}</textarea>
+              <div class="status" id="statusLine">Ready.</div>
+            </div>
+          </section>
+        </aside>
+
+        <section class="card response-card">
+          <h2>Response</h2>
+          <pre id="responseBox">{}</pre>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById("statusLine");
+      const out = document.getElementById("responseBox");
+      const stats = document.getElementById("stats");
+      const liveCounters = document.getElementById("liveCounters");
+
+      function setStatus(msg, ok = true) {
+        statusEl.textContent = msg;
+        statusEl.className = "status " + (ok ? "ok" : "bad");
+      }
+
+      function renderStats(payload) {
+        const obs = payload?.observation || payload || {};
+        const md = obs?.metadata || payload?.metadata || {};
+        const hitRate = md.hit_rate ?? obs.hit_rate ?? "-";
+        const step = md.step ?? obs.step_count ?? payload?.state?.step_count ?? "-";
+        const mode = obs.ui_agent_mode ?? md.agent_mode ?? "manual";
+        const redis = md.redis_status ?? "-";
+        const items = [
+          ["Step", step],
+          ["Hit Rate", typeof hitRate === "number" ? hitRate.toFixed(3) : hitRate],
+          ["Agent Mode", mode],
+          ["Redis", redis],
+        ];
+        stats.innerHTML = items
+          .map(([k, v]) => `<div class="chip"><span class="k">${k}</span><span class="v">${v}</span></div>`)
+          .join("");
+
+        const rewardVal = payload?.reward ?? obs?.reward ?? 0;
+        const reward = typeof rewardVal === "number" ? rewardVal.toFixed(2) : rewardVal;
+        const hits = md.hits ?? "-";
+        const misses = md.misses ?? "-";
+        const actionSource = obs.ui_action_source ?? md.action_source ?? "-";
+        const appliedEvict = obs.ui_applied_evict_slot ?? md.applied_evict_slot ?? "-";
+        const penalty = typeof rewardVal === "number" && rewardVal < 0 && actionSource === "agent:fallback" ? "yes" : "no";
+        const counters = [
+          ["Hits", hits],
+          ["Misses", misses],
+          ["Reward", reward],
+          ["Penalty", penalty],
+          ["Action Source", actionSource],
+          ["Evict Slot", appliedEvict],
+        ];
+        liveCounters.innerHTML = counters
+          .map(([k, v]) => `<div class="chip"><span class="k">${k}</span><span class="v">${v}</span></div>`)
+          .join("");
+      }
+
+      function show(payload) {
+        out.textContent = JSON.stringify(payload, null, 2);
+        renderStats(payload);
+      }
+
+      async function callApi(path, method = "GET", body = null) {
+        setStatus(`${method} ${path} ...`);
+        const res = await fetch(path, {
+          method,
+          headers: body ? { "Content-Type": "application/json" } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { raw: text };
+        }
+        if (!res.ok) {
+          show(data);
+          setStatus(`${method} ${path} failed (${res.status})`, false);
+          return;
+        }
+        show(data);
+        setStatus(`${method} ${path} success`);
+      }
+
+      document.getElementById("resetBtn").onclick = () => callApi("/reset", "POST", {});
+      document.getElementById("stateBtn").onclick = () => callApi("/state", "GET");
+      document.getElementById("schemaBtn").onclick = () => callApi("/schema", "GET");
+      document.getElementById("metaBtn").onclick = () => callApi("/metadata", "GET");
+      document.getElementById("stepBtn").onclick = async () => {
+        const raw = document.getElementById("actionInput").value;
+        try {
+          const action = JSON.parse(raw);
+          await callApi("/step", "POST", { action });
+        } catch (e) {
+          setStatus("Invalid JSON in Step Action input", false);
+        }
+      };
+
+      callApi("/metadata", "GET").catch(() => setStatus("Server not reachable", false));
+
+      (function initTabs() {
+        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+        const panels = {
+          "panel-data": document.getElementById("panel-data"),
+          "panel-how": document.getElementById("panel-how"),
+          "panel-why": document.getElementById("panel-why"),
+        };
+
+        function activate(id) {
+          tabs.forEach((t) => {
+            const on = t.id === id;
+            t.setAttribute("aria-selected", on ? "true" : "false");
+            t.tabIndex = on ? 0 : -1;
+          });
+          Object.entries(panels).forEach(([pid, el]) => {
+            const on = (id === "tab-data" && pid === "panel-data") || (id === "tab-how" && pid === "panel-how") || (id === "tab-why" && pid === "panel-why");
+            el.classList.toggle("active", on);
+            el.hidden = !on;
+          });
+        }
+
+        tabs.forEach((tab) => {
+          tab.addEventListener("click", () => activate(tab.id));
+          tab.addEventListener("keydown", (e) => {
+            const i = tabs.indexOf(tab);
+            if (e.key === "ArrowRight") {
+              e.preventDefault();
+              activate(tabs[(i + 1) % tabs.length].id);
+              tabs[(i + 1) % tabs.length].focus();
+            } else if (e.key === "ArrowLeft") {
+              e.preventDefault();
+              activate(tabs[(i - 1 + tabs.length) % tabs.length].id);
+              tabs[(i - 1 + tabs.length) % tabs.length].focus();
+            }
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
