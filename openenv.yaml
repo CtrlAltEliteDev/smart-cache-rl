@@ -1,7 +1,28 @@
 spec_version: 1
 name: smart_cache_rl
+description: >
+  Cache eviction environment for reinforcement learning. An agent manages a
+  fixed-size cache under realistic skewed request traffic, choosing which item
+  to evict on each cache miss. Rewards are proportional to item fetch cost.
+  Three tasks of increasing difficulty test warm-up, steady-state eviction,
+  and adaptation to adversarial popularity shifts.
 type: space
 runtime: fastapi
 app: server.app:app
 port: 7860
-
+tasks:
+  - name: cache-warmup
+    difficulty: easy
+    description: >
+      4-slot cache, 32-item catalog, uniform traffic, 100 steps.
+      Any reasonable eviction policy achieves >35% hit rate.
+  - name: cache-eviction
+    difficulty: medium
+    description: >
+      16-slot cache, 128-item catalog, Zipf popularity (α=1.25), 500 steps.
+      LRU achieves ~55%; good policies reach ~70%.
+  - name: cache-adversarial
+    difficulty: hard
+    description: >
+      8-slot cache, 128-item catalog, Zipf popularity that shifts sharply
+      at the midpoint, 600 steps. Requires rapid adaptation to survive the shift.

@@ -51,11 +51,22 @@ class SmartCacheRlEnvironment(Environment):
         last_access_step: int
         frequency: int
 
-    def __init__(self):
-        self.capacity = 16
-        self.catalog_size = 128
-        self.max_steps = 1200
+    def __init__(self, config: dict | None = None):
+        _cfg = config or {}
+
+        def _get(key: str, default: str) -> str:
+            v = _cfg.get(key)
+            if v is not None:
+                return str(v)
+            return os.getenv(key, default)
+
+        self.capacity = int(_get("CACHE_CAPACITY", "16"))
+        self.catalog_size = int(_get("CATALOG_SIZE", "128"))
+        self.max_steps = int(_get("MAX_STEPS", "1200"))
         self.default_seed = 42
+
+        self._adversarial = _get("ADVERSARIAL", "false").lower() in ("1", "true", "yes")
+        self._shift_done = False
 
         self._rng = np.random.default_rng(self.default_seed)
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -68,11 +79,11 @@ class SmartCacheRlEnvironment(Environment):
         self._item_costs = self._rng.integers(1, 32, size=self.catalog_size).astype(float)
         raw_pop = self._rng.zipf(1.25, size=self.catalog_size).astype(float)
         self._popularity = raw_pop / raw_pop.sum()
-        self._sampling_mode = os.getenv("REQUEST_SAMPLING_MODE", "popularity").strip().lower()
+        self._sampling_mode = _get("REQUEST_SAMPLING_MODE", "popularity").strip().lower()
         if self._sampling_mode not in ("popularity", "uniform"):
             self._sampling_mode = "popularity"
 
-        use_wikipedia = os.getenv("USE_WIKIPEDIA_DATA", "true").lower() in ("1", "true", "yes")
+        use_wikipedia = _get("USE_WIKIPEDIA_DATA", "true").lower() in ("1", "true", "yes")
         if use_wikipedia:
             self._fetch_wikipedia_catalog()
 
@@ -92,7 +103,8 @@ class SmartCacheRlEnvironment(Environment):
         self._agent_mode = os.getenv("AGENT_MODE", "manual").strip().lower()
         if self._agent_mode not in ("manual", "lru", "lfu", "dqn"):
             self._agent_mode = "manual"
-        self._dqn_agent = DQNCacheAgent(capacity=self.capacity, feature_dim=68, seed=42)
+        _feature_dim = 4 * self.capacity + 4
+        self._dqn_agent = DQNCacheAgent(capacity=self.capacity, feature_dim=_feature_dim, seed=42)
         self._grader = Grader()
         self._train_online = os.getenv("TRAIN_DQN_ONLINE", "true").lower() in ("1", "true", "yes")
         self._train_every = max(1, int(os.getenv("DQN_TRAIN_EVERY", "1")))
@@ -111,6 +123,7 @@ class SmartCacheRlEnvironment(Environment):
         self._last_reward = 0.0
         self._hit_count = 0
         self._miss_count = 0
+        self._shift_done = False
 
         self._current_seed = self.default_seed
         self._rng = np.random.default_rng(self._current_seed)
@@ -130,6 +143,12 @@ class SmartCacheRlEnvironment(Environment):
             self._next_request = self._sample_request()
 
         self._state.step_count += 1
+
+        # Adversarial popularity shift at episode midpoint
+        if self._adversarial and not self._shift_done and self._state.step_count >= self.max_steps // 2:
+            self._apply_popularity_shift()
+            self._shift_done = True
+
         state_vec = self._build_dqn_feature_vector()
         train_action: Optional[int] = None
         request_id = int(self._next_request)
@@ -537,6 +556,18 @@ class SmartCacheRlEnvironment(Environment):
         except Exception:
             self._redis_status = "read_failed_fallback_memory"
             return {}
+
+    def _apply_popularity_shift(self) -> None:
+        """Swap top-quarter and bottom-quarter popularity to simulate adversarial traffic shift."""
+        n = len(self._popularity)
+        quarter = max(1, n // 4)
+        sorted_idx = np.argsort(self._popularity)
+        top = sorted_idx[-quarter:].copy()
+        bottom = sorted_idx[:quarter].copy()
+        top_vals = self._popularity[top].copy()
+        self._popularity[top] = self._popularity[bottom]
+        self._popularity[bottom] = top_vals
+        self._popularity = self._popularity / self._popularity.sum()
 
     def _sample_request(self) -> int:
         if self._sampling_mode == "uniform":

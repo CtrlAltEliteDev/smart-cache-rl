@@ -1,11 +1,18 @@
 """
 Inference script for smart_cache_rl.
 
+Runs all three tasks (easy → medium → hard) in-process and emits
+structured [START] / [STEP] / [END] logs for each.
+
 Required env vars:
-    API_BASE_URL
-    MODEL_NAME
-    HF_TOKEN
-    LOCAL_IMAGE_NAME (optional if ENV_BASE_URL is used)
+    API_BASE_URL   LLM endpoint (used only when POLICY_MODE=llm)
+    MODEL_NAME     Model identifier (used only when POLICY_MODE=llm)
+    HF_TOKEN       API key (used only when POLICY_MODE=llm)
+
+Optional env vars:
+    POLICY_MODE    one of: lru | lfu | dqn | llm  (default: dqn)
+    TEMPERATURE    LLM sampling temperature (default: 0.2)
+    MAX_TOKENS     LLM max tokens per call (default: 80)
 """
 
 from __future__ import annotations
@@ -17,20 +24,21 @@ from typing import List, Optional
 from openai import OpenAI
 
 from agent import DQNCacheAgent
-from client import SmartCacheRlEnv
-from models import SmartCacheRlAction
+from models import SmartCacheRlAction, SmartCacheRlObservation
 from policy import choose_lfu_eviction, choose_lru_eviction
+from tasks import TASKS, Task
+
+# Import the environment directly for in-process execution
+try:
+    from server.smart_cache_rl_environment import SmartCacheRlEnvironment
+except ImportError:
+    from smart_cache_rl_environment import SmartCacheRlEnvironment
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 API_KEY = os.getenv("HF_TOKEN", "")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "").strip()
-ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8000").strip()
-
-TASK_NAME = os.getenv("TASK_NAME", "smart-cache-eviction")
 BENCHMARK = os.getenv("BENCHMARK", "smart_cache_rl")
-MAX_STEPS = int(os.getenv("MAX_STEPS", "200"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "80"))
 POLICY_MODE = os.getenv("POLICY_MODE", "dqn").strip().lower()
@@ -56,10 +64,10 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     )
 
 
-def _build_prompt(obs) -> str:
+def _build_prompt(obs: SmartCacheRlObservation, capacity: int) -> str:
     return (
         "You are choosing a cache eviction slot.\n"
-        "Return exactly one token: NONE or an integer index between 0 and 15.\n"
+        f"Return exactly one token: NONE or an integer index between 0 and {capacity - 1}.\n"
         f"incoming_item_id={obs.incoming_item_id}\n"
         f"incoming_size={obs.incoming_size:.4f}\n"
         f"incoming_cost={obs.incoming_cost:.4f}\n"
@@ -73,7 +81,7 @@ def _build_prompt(obs) -> str:
     )
 
 
-def _parse_action(text: str) -> Optional[int]:
+def _parse_action(text: str, capacity: int) -> Optional[int]:
     raw = (text or "").strip().upper()
     if raw == "NONE":
         return None
@@ -81,14 +89,12 @@ def _parse_action(text: str) -> Optional[int]:
     if not m:
         return None
     idx = int(m.group(0))
-    if idx < 0:
-        return 0
-    if idx > 15:
-        return 15
-    return idx
+    return max(0, min(capacity - 1, idx))
 
 
-def choose_action_with_llm(client: OpenAI, obs) -> Optional[int]:
+def choose_action_with_llm(
+    client: OpenAI, obs: SmartCacheRlObservation, capacity: int
+) -> Optional[int]:
     if obs.cache_fill_ratio < 1.0:
         return None
     try:
@@ -97,19 +103,16 @@ def choose_action_with_llm(client: OpenAI, obs) -> Optional[int]:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are an RL cache policy helper. "
-                        "Output only NONE or a single integer index."
-                    ),
+                    "content": "You are an RL cache policy helper. Output only NONE or a single integer index.",
                 },
-                {"role": "user", "content": _build_prompt(obs)},
+                {"role": "user", "content": _build_prompt(obs, capacity)},
             ],
             temperature=TEMPERATURE,
             max_tokens=MAX_TOKENS,
             stream=False,
         )
         text = (resp.choices[0].message.content or "").strip()
-        parsed = _parse_action(text)
+        parsed = _parse_action(text, capacity)
         if parsed is None and obs.cache_fill_ratio >= 1.0:
             return choose_lru_eviction(obs)
         return parsed
@@ -117,47 +120,45 @@ def choose_action_with_llm(client: OpenAI, obs) -> Optional[int]:
         return choose_lru_eviction(obs)
 
 
-def main() -> None:
-    if POLICY_MODE == "llm" and not API_KEY:
-        raise RuntimeError("HF_TOKEN is required")
+def run_task(task: Task, client: Optional[OpenAI]) -> float:
+    """Run one complete episode for the given task. Returns score in [0.0, 1.0]."""
+    capacity = int(task.env_config["CACHE_CAPACITY"])
+    max_steps = int(task.env_config["MAX_STEPS"])
+    feature_dim = 4 * capacity + 4
 
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY) if POLICY_MODE == "llm" else None
-    env = (
-        SmartCacheRlEnv.from_docker_image(LOCAL_IMAGE_NAME)
-        if LOCAL_IMAGE_NAME
-        else SmartCacheRlEnv(base_url=ENV_BASE_URL)
-    )
-    dqn_agent = DQNCacheAgent(capacity=16, feature_dim=68, seed=42)
+    env = SmartCacheRlEnvironment(config=task.env_config)
+    dqn_agent = DQNCacheAgent(capacity=capacity, feature_dim=feature_dim, seed=42)
 
     rewards: List[float] = []
     steps_taken = 0
+    prev_obs: Optional[SmartCacheRlObservation] = None
+
+    log_start(task=task.name, env=BENCHMARK, model=MODEL_NAME)
     success = False
     score = 0.0
-
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
     try:
-        result = env.reset()
-        for step in range(1, MAX_STEPS + 1):
-            if result.done:
+        obs = env.reset()
+        for step in range(1, max_steps + 1):
+            if obs.done:
                 break
-            obs = result.observation
+
             if POLICY_MODE == "lru":
                 evict_index = choose_lru_eviction(obs)
             elif POLICY_MODE == "lfu":
                 evict_index = choose_lfu_eviction(obs)
             elif POLICY_MODE == "llm":
-                evict_index = choose_action_with_llm(client, obs)  # type: ignore[arg-type]
+                evict_index = choose_action_with_llm(client, obs, capacity)  # type: ignore[arg-type]
             else:
                 evict_index = dqn_agent.act(obs, training=True)
-            action_str = "NONE" if evict_index is None else str(evict_index)
 
-            result = env.step(SmartCacheRlAction(evict_index=evict_index))
-            reward = float(result.reward or 0.0)
-            done = bool(result.done)
-            next_obs = result.observation
+            action_str = "NONE" if evict_index is None else str(evict_index)
+            prev_obs = obs
+            obs = env.step(SmartCacheRlAction(evict_index=evict_index))
+            reward = float(obs.reward or 0.0)
+            done = bool(obs.done)
 
             if POLICY_MODE == "dqn":
-                dqn_agent.observe(obs, evict_index, reward, next_obs, done)
+                dqn_agent.observe(prev_obs, evict_index, reward, obs, done)
                 dqn_agent.train_step(batch_size=32)
 
             rewards.append(reward)
@@ -166,16 +167,25 @@ def main() -> None:
             if done:
                 break
 
-        final_obs = result.observation
-        hit_rate = float((final_obs.metadata or {}).get("hit_rate", 0.0))
-        score = max(0.0, min(1.0, hit_rate))
-        success = score >= 0.5
+        hit_rate = float((obs.metadata or {}).get("hit_rate", 0.0))
+        score = task.grader(hit_rate)
+        success = hit_rate >= task.success_threshold
     finally:
-        try:
-            env.close()
-        except Exception:
-            pass
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+    return score
+
+
+def main() -> None:
+    if POLICY_MODE == "llm" and not API_KEY:
+        raise RuntimeError("HF_TOKEN is required when POLICY_MODE=llm")
+
+    client: Optional[OpenAI] = None
+    if POLICY_MODE == "llm":
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+
+    for task in TASKS:
+        run_task(task, client)
 
 
 if __name__ == "__main__":

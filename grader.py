@@ -94,3 +94,22 @@ class Grader:
             "grade": self.grade,
         }
 
+
+def score_episode(task_name: str, hit_rate: float) -> float:
+    """Return a deterministic score in [0.0, 1.0] for a completed episode.
+
+    Args:
+        task_name: One of 'cache-warmup', 'cache-eviction', 'cache-adversarial'.
+        hit_rate:  Fraction of requests that were cache hits during the episode.
+
+    Returns:
+        Normalized score in [0.0, 1.0].
+    """
+    try:
+        from tasks import TASKS_BY_NAME
+        task = TASKS_BY_NAME[task_name]
+        return task.grader(hit_rate)
+    except KeyError:
+        # Unknown task – fall back to raw hit rate
+        return min(1.0, max(0.0, hit_rate))
+
