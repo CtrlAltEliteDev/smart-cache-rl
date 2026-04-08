@@ -216,7 +216,7 @@ POLICY_MODE=lru python inference.py
 # LLM policy (requires API credentials)
 API_BASE_URL=https://router.huggingface.co/v1 \
 MODEL_NAME=Qwen/Qwen2.5-72B-Instruct \
-HF_TOKEN=your_token \
+API_KEY=your_token \
 POLICY_MODE=llm python inference.py
 ```
 

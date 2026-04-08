@@ -5,12 +5,12 @@ Runs all three tasks (easy → medium → hard) in-process and emits
 structured [START] / [STEP] / [END] logs for each.
 
 Required env vars:
-    API_BASE_URL   LLM endpoint (used only when POLICY_MODE=llm)
+    API_BASE_URL   LiteLLM proxy endpoint (used when POLICY_MODE=llm)
+    API_KEY        LiteLLM proxy API key (used when POLICY_MODE=llm)
     MODEL_NAME     Model identifier (used only when POLICY_MODE=llm)
-    HF_TOKEN       API key (used only when POLICY_MODE=llm)
 
 Optional env vars:
-    POLICY_MODE    one of: lru | lfu | dqn | llm  (default: dqn)
+    POLICY_MODE    one of: lru | lfu | dqn | llm  (default: llm)
     TEMPERATURE    LLM sampling temperature (default: 0.2)
     MAX_TOKENS     LLM max tokens per call (default: 80)
 """
@@ -35,13 +35,13 @@ except ImportError:
     from smart_cache_rl_environment import SmartCacheRlEnvironment
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+API_BASE_URL = os.getenv("API_BASE_URL", "").strip()
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-API_KEY = os.getenv("HF_TOKEN", "")
+API_KEY = os.getenv("API_KEY", "").strip()
 BENCHMARK = os.getenv("BENCHMARK", "smart_cache_rl")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "80"))
-POLICY_MODE = os.getenv("POLICY_MODE", "dqn").strip().lower()
+POLICY_MODE = os.getenv("POLICY_MODE", "llm").strip().lower()
 
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -177,8 +177,10 @@ def run_task(task: Task, client: Optional[OpenAI]) -> float:
 
 
 def main() -> None:
+    if POLICY_MODE == "llm" and not API_BASE_URL:
+        raise RuntimeError("API_BASE_URL is required when POLICY_MODE=llm")
     if POLICY_MODE == "llm" and not API_KEY:
-        raise RuntimeError("HF_TOKEN is required when POLICY_MODE=llm")
+        raise RuntimeError("API_KEY is required when POLICY_MODE=llm")
 
     client: Optional[OpenAI] = None
     if POLICY_MODE == "llm":
