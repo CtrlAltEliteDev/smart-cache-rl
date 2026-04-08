@@ -27,7 +27,7 @@ class Grader:
     last_epsilon: float = 0.0
     train_steps: int = 0
     replay_size: int = 0
-    grade: float = 0.0
+    grade: float = _EPS
     history: list[float] = field(default_factory=list)
 
     def reset(self) -> None:
@@ -42,7 +42,7 @@ class Grader:
         self.last_epsilon = 0.0
         self.train_steps = 0
         self.replay_size = 0
-        self.grade = 0.0
+        self.grade = _EPS
         self.history.clear()
 
     def update(
@@ -76,11 +76,11 @@ class Grader:
 
     def _compute_grade(self) -> float:
         if self.total_requests <= 0:
-            return 0.0
+            return _EPS
         hit_rate = float(self.hits) / float(self.total_requests)
         avg_reward = self.cumulative_reward / float(self.total_requests)
-        reward_term = max(0.0, min(1.0, (avg_reward + 30.0) / 60.0))
-        return 0.7 * hit_rate + 0.3 * reward_term
+        reward_term = _strict_unit((avg_reward + 30.0) / 60.0)
+        return _strict_unit(0.7 * hit_rate + 0.3 * reward_term)
 
     def to_dict(self) -> Dict[str, float | int | bool]:
         hit_rate = float(self.hits) / max(1, self.total_requests)
