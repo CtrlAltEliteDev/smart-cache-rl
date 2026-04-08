@@ -127,6 +127,18 @@ async def custom_ui_alias() -> HTMLResponse:
     return HTMLResponse(_load_ui_html())
 
 
+@app.get("/web", response_class=HTMLResponse, include_in_schema=False)
+async def hf_web_alias() -> HTMLResponse:
+    # Hugging Face Space probes `/web` for compatibility with OpenEnv-style UIs.
+    # Serve the same dashboard HTML as `/` and `/ui`.
+    return HTMLResponse(_load_ui_html())
+
+
+@app.get("/web/", response_class=HTMLResponse, include_in_schema=False)
+async def hf_web_alias_slash() -> HTMLResponse:
+    return HTMLResponse(_load_ui_html())
+
+
 def main(host: str = "0.0.0.0", port: int = 8000):
     """Entry point for direct execution via uv run or python -m."""
     import uvicorn
