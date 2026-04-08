@@ -475,8 +475,13 @@ class SmartCacheRlEnvironment(Environment):
                     if a["article"] != "Main_Page" and not a["article"].startswith("Special:")
                 ]
                 articles = articles[:self.catalog_size]
-                if len(articles) < self.catalog_size:
+                # Accept if we have at least 20 articles; shrink catalog_size to match
+                if len(articles) < 20:
                     continue
+                if len(articles) < self.catalog_size:
+                    self.catalog_size = len(articles)
+                    self._item_sizes = self._rng.integers(1, 16, size=self.catalog_size).astype(float)
+                    self._item_costs = self._rng.integers(1, 32, size=self.catalog_size).astype(float)
 
                 names = [a["article"].replace("_", " ") for a in articles]
                 views = np.array([float(a["views"]) for a in articles])
