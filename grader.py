@@ -5,11 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict
 
-_EPS = 1e-6
-
-
-def _strict_unit(x: float) -> float:
-    return min(1.0 - _EPS, max(_EPS, float(x)))
+from tasks import EPS_OPEN, strict_open_unit
 
 
 @dataclass
@@ -27,7 +23,7 @@ class Grader:
     last_epsilon: float = 0.0
     train_steps: int = 0
     replay_size: int = 0
-    grade: float = _EPS
+    grade: float = EPS_OPEN
     history: list[float] = field(default_factory=list)
 
     def reset(self) -> None:
@@ -42,7 +38,7 @@ class Grader:
         self.last_epsilon = 0.0
         self.train_steps = 0
         self.replay_size = 0
-        self.grade = _EPS
+        self.grade = EPS_OPEN
         self.history.clear()
 
     def update(
@@ -76,11 +72,11 @@ class Grader:
 
     def _compute_grade(self) -> float:
         if self.total_requests <= 0:
-            return _EPS
+            return EPS_OPEN
         hit_rate = float(self.hits) / float(self.total_requests)
         avg_reward = self.cumulative_reward / float(self.total_requests)
-        reward_term = _strict_unit((avg_reward + 30.0) / 60.0)
-        return _strict_unit(0.7 * hit_rate + 0.3 * reward_term)
+        reward_term = strict_open_unit((avg_reward + 30.0) / 60.0)
+        return strict_open_unit(0.7 * hit_rate + 0.3 * reward_term)
 
     def to_dict(self) -> Dict[str, float | int | bool]:
         hit_rate = float(self.hits) / max(1, self.total_requests)
@@ -102,19 +98,19 @@ class Grader:
 
 
 def score_episode(task_name: str, hit_rate: float) -> float:
-    """Return a deterministic score in [0.0, 1.0] for a completed episode.
+    """Return a deterministic score in the open interval (0, 1) for a completed episode.
 
     Args:
         task_name: One of 'cache-warmup', 'cache-eviction', 'cache-adversarial'.
         hit_rate:  Fraction of requests that were cache hits during the episode.
 
     Returns:
-        Normalized score strictly in (0.0, 1.0).
+        Normalized score strictly in (0, 1), never 0.0 or 1.0.
     """
     try:
         from tasks import TASKS_BY_NAME
         task = TASKS_BY_NAME[task_name]
-        return task.grader(hit_rate)
+        return strict_open_unit(task.grader(hit_rate))
     except KeyError:
         # Unknown task – fall back to raw hit rate
-        return _strict_unit(hit_rate)
+        return strict_open_unit(hit_rate)

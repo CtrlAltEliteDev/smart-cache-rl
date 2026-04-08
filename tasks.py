@@ -6,7 +6,22 @@ that returns a score strictly in (0.0, 1.0).
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Dict, List, NamedTuple
+
+# Open interval (0, 1) — hackathon / evaluator checks reject 0.0 and 1.0 exactly.
+EPS_OPEN: float = 1e-5
+
+
+def strict_open_unit(x: float) -> float:
+    """Map a scalar into the open interval (0, 1); never returns 0.0 or 1.0."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return EPS_OPEN
+    if not math.isfinite(v):
+        return EPS_OPEN
+    return min(1.0 - EPS_OPEN, max(EPS_OPEN, v))
 
 
 class Task(NamedTuple):
@@ -18,30 +33,22 @@ class Task(NamedTuple):
     success_threshold: float  # minimum hit_rate for success=True
 
 
-_EPS = 1e-6
-
-
-def _strict_unit(x: float) -> float:
-    """Clamp to the open interval (0, 1) for evaluator compatibility."""
-    return min(1.0 - _EPS, max(_EPS, float(x)))
-
-
 def _easy_grader(hit_rate: float) -> float:
     """4-slot cache, 16-item Zipf traffic. LRU ≈90%.
     Score approaches 0 at very low hit rate and approaches 1 at 80%+ hit rate."""
-    return _strict_unit(hit_rate / 0.80)
+    return strict_open_unit(hit_rate / 0.80)
 
 
 def _medium_grader(hit_rate: float) -> float:
     """16-slot cache, 128-item Zipf traffic. LRU ≈97%.
     Score approaches 0 at 60% hit rate and approaches 1 at 95%+ hit rate."""
-    return _strict_unit((hit_rate - 0.60) / 0.35)
+    return strict_open_unit((hit_rate - 0.60) / 0.35)
 
 
 def _hard_grader(hit_rate: float) -> float:
     """8-slot cache, adversarial Zipf with midpoint shift. LRU ≈97% pre-shift, drops after.
     Score approaches 0 at 50% hit rate and approaches 1 at 90%+ hit rate."""
-    return _strict_unit((hit_rate - 0.50) / 0.40)
+    return strict_open_unit((hit_rate - 0.50) / 0.40)
 
 
 TASKS: List[Task] = [

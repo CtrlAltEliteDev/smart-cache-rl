@@ -26,7 +26,7 @@ from openai import OpenAI
 from agent import DQNCacheAgent
 from models import SmartCacheRlAction, SmartCacheRlObservation
 from policy import choose_lfu_eviction, choose_lru_eviction
-from tasks import TASKS, Task
+from tasks import TASKS, Task, strict_open_unit
 
 # Import the environment directly for in-process execution
 try:
@@ -121,7 +121,7 @@ def choose_action_with_llm(
 
 
 def run_task(task: Task, client: Optional[OpenAI]) -> float:
-    """Run one complete episode for the given task. Returns score in [0.0, 1.0]."""
+    """Run one complete episode for the given task. Returns score in (0, 1), never 0.0 or 1.0."""
     capacity = int(task.env_config["CACHE_CAPACITY"])
     max_steps = int(task.env_config["MAX_STEPS"])
     feature_dim = 4 * capacity + 4
@@ -135,7 +135,7 @@ def run_task(task: Task, client: Optional[OpenAI]) -> float:
 
     log_start(task=task.name, env=BENCHMARK, model=MODEL_NAME)
     success = False
-    score = 0.0
+    score = strict_open_unit(0.0)
     try:
         obs = env.reset()
         for step in range(1, max_steps + 1):
@@ -168,7 +168,7 @@ def run_task(task: Task, client: Optional[OpenAI]) -> float:
                 break
 
         hit_rate = float((obs.metadata or {}).get("hit_rate", 0.0))
-        score = task.grader(hit_rate)
+        score = strict_open_unit(task.grader(hit_rate))
         success = hit_rate >= task.success_threshold
     finally:
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)

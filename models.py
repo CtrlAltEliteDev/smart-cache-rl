@@ -65,7 +65,10 @@ class SmartCacheRlObservation(Observation):
     incoming_popularity: float = Field(
         default=0.0, description="Normalized request probability of requested item."
     )
-    is_hit: bool = Field(default=False, description="True when request is already in cache.")
+    is_hit: bool = Field(
+        default=False,
+        description="True when the upcoming incoming_item_id is already resident in the cache.",
+    )
     cache_fill_ratio: float = Field(default=0.0, description="Current cache utilization.")
     ui_summary: str = Field(
         default="",

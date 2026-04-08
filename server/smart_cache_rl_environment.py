@@ -193,11 +193,12 @@ class SmartCacheRlEnvironment(Environment):
         self._last_reward = reward
         done = self._state.step_count >= self.max_steps
         next_request = self._sample_request() if not done else None
+        # Advance the queue before building the observation and DQN next-state.
+        # Observation `incoming_*` / `is_hit` then describe the *upcoming* request (next action),
+        # while `reward` still reflects the transition just completed.
+        self._next_request = next_request
         if self._train_online and train_action is not None:
-            prev_request = self._next_request
-            self._next_request = next_request
             next_state_vec = self._build_dqn_feature_vector()
-            self._next_request = prev_request
             self._dqn_agent.observe_vector(
                 state=state_vec,
                 action=train_action,
@@ -216,12 +217,8 @@ class SmartCacheRlEnvironment(Environment):
             train_steps=self._train_steps,
             replay_size=len(self._dqn_agent.replay),
         )
-        # Build observation first so `incoming_*`, `is_hit`, and `reward`
-        # describe the same processed request event in this step.
         self._write_redis_metrics(event="step")
         obs = self._build_observation(done=done, reward=reward)
-        # Prepare the next request after emitting the current observation.
-        self._next_request = next_request
         return obs
 
     @property
@@ -391,9 +388,10 @@ class SmartCacheRlEnvironment(Environment):
         incoming_name = (
             self._item_names[incoming_id] if 0 <= incoming_id < len(self._item_names) else str(incoming_id)
         )
+        next_in_cache = incoming_id >= 0 and incoming_id in self._slot_by_item
         ui_summary = (
-            f"step={self._state.step_count} {event} reward={reward:.2f} "
-            f"incoming='{incoming_name}' fill={sum(occupied)}/{self.capacity} "
+            f"step={self._state.step_count} last={event} reward={reward:.2f} "
+            f"next_incoming='{incoming_name}' fill={sum(occupied)}/{self.capacity} "
             f"catalog={self._catalog_source}"
         )
         ui_hit_rate = f"hits={self._hit_count} misses={self._miss_count} hit_rate={hit_rate:.3f}"
@@ -414,7 +412,7 @@ class SmartCacheRlEnvironment(Environment):
             incoming_size=incoming_size,
             incoming_cost=incoming_cost,
             incoming_popularity=incoming_pop,
-            is_hit=self._last_hit,
+            is_hit=next_in_cache,
             cache_fill_ratio=float(sum(occupied)) / float(self.capacity),
             ui_summary=ui_summary,
             ui_hit_rate=ui_hit_rate,
