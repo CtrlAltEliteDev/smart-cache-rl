@@ -15,8 +15,8 @@ COPY . /app/env
 
 # Set PYTHONPATH so imports work correctly
 ENV PYTHONPATH="/app/env"
-# Enable OpenEnv Gradio web UI at /web
-ENV ENABLE_WEB_INTERFACE=true
+# Keep OpenEnv web wrapper disabled; app serves dashboard at `/` and `/ui`.
+ENV ENABLE_WEB_INTERFACE=false
 
 EXPOSE 7860
 

@@ -91,15 +91,13 @@ Main routes exposed by `server.app:app`:
 - `WS /ws`
 - MCP endpoints (`/mcp`)
 
-Note: `GET /` is not defined by default and returns `404`.
+Note: `GET /` serves the built-in dashboard HTML (`server/static/index.html`).
 
-## Web UI (OpenEnv Playground)
+## Web UI
 
-The OpenEnv web playground is served at:
-- `/web`
-
-To enable it, set:
-- `ENABLE_WEB_INTERFACE=true`
+The built-in dashboard is served at:
+- `/`
+- `/ui`
 
 Run locally with env vars loaded:
 
@@ -111,7 +109,8 @@ python -m uvicorn server.app:app --host 0.0.0.0 --port 7860
 ```
 
 Open:
-- `http://127.0.0.1:7860/web` (Playground)
+- `http://127.0.0.1:7860/` (Dashboard)
+- `http://127.0.0.1:7860/ui` (Dashboard alias)
 - `http://127.0.0.1:7860/docs` (Swagger)
 
 ## Reset and Step Semantics
@@ -274,10 +273,8 @@ smart-cache-rl/
 
 ## Quick Troubleshooting
 
-- `/web` returns 404:
-  - Ensure `ENABLE_WEB_INTERFACE=true` is exported before launching uvicorn.
 - `/` returns 404:
-  - Expected; use `/web` or `/docs`.
+  - Unexpected in this project; verify `server/static/index.html` exists and app boot logs show `server.app:app`.
 - `No module named uvicorn`:
   - Install in active venv: `pip install uvicorn`.
 - Redis status shows `connection_failed_fallback_memory`:
