@@ -7,6 +7,7 @@ sdk: docker
 pinned: false
 app_port: 7860
 tags:
+  - openenv-0.2.3
   - openenv
   - reinforcement-learning
   - cache-eviction
