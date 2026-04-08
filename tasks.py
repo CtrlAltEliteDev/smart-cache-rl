@@ -7,10 +7,11 @@ that returns a score strictly in (0.0, 1.0).
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Dict, List, NamedTuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
-# Open interval (0, 1) — hackathon / evaluator checks reject 0.0 and 1.0 exactly.
-EPS_OPEN: float = 1e-5
+# Open interval (0, 1) — evaluators reject 0.0 and 1.0 exactly; use a margin
+# large enough to survive float32/JSON rounding in downstream tooling.
+EPS_OPEN: float = 1e-4
 
 
 def strict_open_unit(x: float) -> float:
@@ -18,10 +19,17 @@ def strict_open_unit(x: float) -> float:
     try:
         v = float(x)
     except (TypeError, ValueError):
-        return EPS_OPEN
+        v = EPS_OPEN
     if not math.isfinite(v):
-        return EPS_OPEN
-    return min(1.0 - EPS_OPEN, max(EPS_OPEN, v))
+        v = EPS_OPEN
+    lo = EPS_OPEN
+    hi = 1.0 - EPS_OPEN
+    v = min(hi, max(lo, v))
+    if v <= lo:
+        return lo
+    if v >= hi:
+        return hi
+    return v
 
 
 class Task(NamedTuple):
@@ -113,3 +121,16 @@ TASKS: List[Task] = [
 ]
 
 TASKS_BY_NAME: Dict[str, Task] = {t.name: t for t in TASKS}
+
+
+def infer_task_name(capacity: int, max_steps: int, adversarial: bool) -> Optional[str]:
+    """Match running env dimensions to a README task name, if unambiguous."""
+    for t in TASKS:
+        ec = t.env_config
+        if (
+            int(ec["CACHE_CAPACITY"]) == int(capacity)
+            and int(ec["MAX_STEPS"]) == int(max_steps)
+            and bool(ec["ADVERSARIAL"]) == bool(adversarial)
+        ):
+            return t.name
+    return None

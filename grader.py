@@ -110,7 +110,8 @@ def score_episode(task_name: str, hit_rate: float) -> float:
     try:
         from tasks import TASKS_BY_NAME
         task = TASKS_BY_NAME[task_name]
-        return strict_open_unit(task.grader(hit_rate))
+        # Task graders already map through strict_open_unit in tasks.py.
+        return task.grader(hit_rate)
     except KeyError:
         # Unknown task – fall back to raw hit rate
         return strict_open_unit(hit_rate)

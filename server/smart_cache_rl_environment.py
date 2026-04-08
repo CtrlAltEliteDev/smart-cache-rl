@@ -24,11 +24,13 @@ from openenv.core.env_server.types import State
 try:
     from ..models import SmartCacheRlAction, SmartCacheRlObservation
     from ..agent import DQNCacheAgent
-    from ..grader import Grader
+    from ..grader import Grader, score_episode
+    from ..tasks import infer_task_name, strict_open_unit
 except ImportError:
     from models import SmartCacheRlAction, SmartCacheRlObservation
     from agent import DQNCacheAgent
-    from grader import Grader
+    from grader import Grader, score_episode
+    from tasks import infer_task_name, strict_open_unit
 
 try:
     import redis  # type: ignore
@@ -364,6 +366,8 @@ class SmartCacheRlEnvironment(Environment):
         incoming_pop = float(self._popularity[incoming_id]) if incoming_id >= 0 else 0.0
         total = self._hit_count + self._miss_count
         hit_rate = float(self._hit_count) / max(1, total)
+        _task_name = infer_task_name(self.capacity, self.max_steps, self._adversarial)
+        _task_score = score_episode(_task_name, hit_rate) if _task_name else strict_open_unit(hit_rate)
         lru_slot = self._evict_lru_index() if len(self._cache) == self.capacity else -1
         if len(self._cache) == self.capacity:
             lfu_slot = self._evict_lfu_index()
@@ -431,6 +435,8 @@ class SmartCacheRlEnvironment(Environment):
                 "hits": self._hit_count,
                 "misses": self._miss_count,
                 "hit_rate": hit_rate,
+                "task_name": _task_name,
+                "task_score": _task_score,
                 "redis_enabled": self._redis_enabled,
                 "redis_status": self._redis_status,
                 "redis_episode_key": self._redis_episode_key,

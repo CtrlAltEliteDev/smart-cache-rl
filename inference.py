@@ -168,7 +168,8 @@ def run_task(task: Task, client: Optional[OpenAI]) -> float:
                 break
 
         hit_rate = float((obs.metadata or {}).get("hit_rate", 0.0))
-        score = strict_open_unit(task.grader(hit_rate))
+        # Task grader already returns a value strictly in (0, 1); keep one clamp for safety.
+        score = task.grader(hit_rate)
         success = hit_rate >= task.success_threshold
     finally:
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)

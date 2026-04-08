@@ -1706,6 +1706,13 @@
         return data;
       }
 
+      const _SCORE_EPS = 1e-4;
+      function clampTaskScoreOpen01(raw) {
+        const v = Number(raw);
+        if (!Number.isFinite(v)) return _SCORE_EPS;
+        return Math.min(1 - _SCORE_EPS, Math.max(_SCORE_EPS, v));
+      }
+
       function renderComparisonRows(rows) {
         if (!compareTableBody) return;
         compareTableBody.innerHTML = rows
@@ -1742,7 +1749,7 @@
           hits: Number(md.hits ?? grader.hits ?? 0),
           misses: Number(md.misses ?? grader.misses ?? 0),
           cumReward: Number(grader.cumulative_reward ?? 0),
-          grade: Number(grader.grade ?? 0),
+          grade: clampTaskScoreOpen01(grader.grade ?? _SCORE_EPS),
         };
       }
 
@@ -1771,12 +1778,6 @@
         },
       ];
 
-      const _SCORE_EPS = 1e-5;
-      function clampTaskScoreOpen01(raw) {
-        const v = Number(raw);
-        if (!Number.isFinite(v)) return _SCORE_EPS;
-        return Math.min(1 - _SCORE_EPS, Math.max(_SCORE_EPS, v));
-      }
       function gameTaskScore(hitRate, taskName) {
         const hr = Number(hitRate);
         let linear;
