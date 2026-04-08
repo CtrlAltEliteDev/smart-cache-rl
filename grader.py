@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict
 
+_EPS = 1e-6
+
+
+def _strict_unit(x: float) -> float:
+    return min(1.0 - _EPS, max(_EPS, float(x)))
+
 
 @dataclass
 class Grader:
@@ -103,7 +109,7 @@ def score_episode(task_name: str, hit_rate: float) -> float:
         hit_rate:  Fraction of requests that were cache hits during the episode.
 
     Returns:
-        Normalized score in [0.0, 1.0].
+        Normalized score strictly in (0.0, 1.0).
     """
     try:
         from tasks import TASKS_BY_NAME
@@ -111,5 +117,4 @@ def score_episode(task_name: str, hit_rate: float) -> float:
         return task.grader(hit_rate)
     except KeyError:
         # Unknown task – fall back to raw hit rate
-        return min(1.0, max(0.0, hit_rate))
-
+        return _strict_unit(hit_rate)

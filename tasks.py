@@ -1,7 +1,7 @@
 """Task definitions for Smart Cache RL with deterministic graders.
 
 Three tasks ranging from easy to hard, each with a programmatic grader
-that returns a score in [0.0, 1.0].
+that returns a score strictly in (0.0, 1.0).
 """
 
 from __future__ import annotations
@@ -18,22 +18,30 @@ class Task(NamedTuple):
     success_threshold: float  # minimum hit_rate for success=True
 
 
+_EPS = 1e-6
+
+
+def _strict_unit(x: float) -> float:
+    """Clamp to the open interval (0, 1) for evaluator compatibility."""
+    return min(1.0 - _EPS, max(_EPS, float(x)))
+
+
 def _easy_grader(hit_rate: float) -> float:
     """4-slot cache, 16-item Zipf traffic. LRU ≈90%.
-    Score: 0.0 at 0% hit rate, 1.0 at 80%+ hit rate."""
-    return min(1.0, max(0.0, hit_rate / 0.80))
+    Score approaches 0 at very low hit rate and approaches 1 at 80%+ hit rate."""
+    return _strict_unit(hit_rate / 0.80)
 
 
 def _medium_grader(hit_rate: float) -> float:
     """16-slot cache, 128-item Zipf traffic. LRU ≈97%.
-    Score: 0.0 at 60% hit rate, 1.0 at 95%+ hit rate."""
-    return min(1.0, max(0.0, (hit_rate - 0.60) / 0.35))
+    Score approaches 0 at 60% hit rate and approaches 1 at 95%+ hit rate."""
+    return _strict_unit((hit_rate - 0.60) / 0.35)
 
 
 def _hard_grader(hit_rate: float) -> float:
     """8-slot cache, adversarial Zipf with midpoint shift. LRU ≈97% pre-shift, drops after.
-    Score: 0.0 at 50% hit rate, 1.0 at 90%+ hit rate."""
-    return min(1.0, max(0.0, (hit_rate - 0.50) / 0.40))
+    Score approaches 0 at 50% hit rate and approaches 1 at 90%+ hit rate."""
+    return _strict_unit((hit_rate - 0.50) / 0.40)
 
 
 TASKS: List[Task] = [
