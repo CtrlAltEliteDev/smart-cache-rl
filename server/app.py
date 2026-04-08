@@ -139,11 +139,15 @@ async def hf_web_alias_slash() -> HTMLResponse:
     return HTMLResponse(_load_ui_html())
 
 
-def main(host: str = "0.0.0.0", port: int = 8000):
-    """Entry point for direct execution via uv run or python -m."""
+def _run_server(host: str, port: int) -> None:
     import uvicorn
 
     uvicorn.run(app, host=host, port=port)
+
+
+def main() -> None:
+    """Validator-friendly callable entrypoint for console scripts."""
+    _run_server(host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":
@@ -152,4 +156,4 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
-    main(port=args.port)
+    _run_server(host="0.0.0.0", port=args.port)
