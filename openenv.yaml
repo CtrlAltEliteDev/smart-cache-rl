@@ -14,8 +14,8 @@ tasks:
   - name: cache-warmup
     difficulty: easy
     description: >
-      4-slot cache, 32-item catalog, uniform traffic, 100 steps.
-      Any reasonable eviction policy achieves >35% hit rate.
+      4-slot cache, 16-item catalog, Zipf popularity traffic, 100 steps.
+      Any policy retaining recently-seen items achieves >40% hit rate.
   - name: cache-eviction
     difficulty: medium
     description: >
