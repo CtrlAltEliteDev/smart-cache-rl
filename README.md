@@ -10,6 +10,7 @@ tags:
   - openenv
   - reinforcement-learning
   - cache-eviction
+base_path: /web
 ---
 
 # Smart Cache RL Environment
